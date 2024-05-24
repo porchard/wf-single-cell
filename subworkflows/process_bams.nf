@@ -30,17 +30,22 @@ process generate_whitelist{
         tuple val(meta),
               path("kneeplot.png"),
               emit: kneeplot
+        tuple val(meta),
+              path("whitelist.tsv"),
+              path("high_qual_bc_counts.tsv"),
+              emit: for_assignment
         // Note: This is called "uncorrected", but they're actually counts of
         //       high quality exact matches to longlist. Low frequency barcodes
         //       are assumed to be false positives. The list is further
         //       filtered by the selected method (basically by abundance).
     // TODO: change this to take precomputed, filtered counts from extract_barcodes
+    script:
+        flags = params.correction_method == 'custom' ? '--method abundance --read_count 1' : ('--method quantile --exp_cells ' + meta['expected_cells'])
     """
     workflow-glue create_shortlist \
         barcodes whitelist.tsv \
         --counts \
-        --method quantile \
-        --exp_cells ${meta['expected_cells']} \
+        ${flags} \
         --plot "kneeplot.png" \
         --counts_out "high_qual_bc_counts.tsv" \
         --threads ${task.cpus}
@@ -55,21 +60,19 @@ process assign_barcodes{
     input:
          tuple val(meta),
                path("whitelist.tsv"),
+               path("high_qual_bc_counts.tsv"),
                path("extract_barcodes.tsv")
     output:
-        tuple val(meta),
-              path("bc_assign_counts.tsv"),
-              emit: chrom_assigned_barcode_counts
+        // tuple val(meta),
+        //       path("bc_assign_counts.tsv"),
+        //       emit: chrom_assigned_barcode_counts
         tuple val(meta),
               path("extract_barcodes_with_bc.tsv"),
               emit: tags
+    script:
+        cmd = params.correction_method == 'custom' ? "custom-barcode-correction.py --whitelist whitelist.tsv --tag-file extract_barcodes.tsv --umi-counts high_qual_bc_counts.tsv --method phred > extract_barcodes_with_bc.tsv" : "workflow-glue assign_barcodes whitelist.tsv extract_barcodes.tsv extract_barcodes_with_bc.tsv bc_assign_counts.tsv --max_ed ${params.barcode_max_ed} --min_ed_diff ${params.barcode_min_ed_diff} --use_kmer_index"
     """
-    workflow-glue assign_barcodes \
-        whitelist.tsv extract_barcodes.tsv \
-        extract_barcodes_with_bc.tsv bc_assign_counts.tsv \
-        --max_ed ${params.barcode_max_ed} \
-        --min_ed_diff ${params.barcode_min_ed_diff} \
-        --use_kmer_index
+    $cmd
     """
 }
 
@@ -245,14 +248,11 @@ process create_matrix {
         tuple val(meta), val(chr), path("features.tsv"), path(read_tags, stageAs: "barcodes.tsv")
     output:
         tuple val(meta), val(chr), path("summary.tsv"), emit: summary
-        tuple val(meta), val(chr), val("gene"), path("expression.gene.hdf"), emit: gene
-        tuple val(meta), val(chr), val("transcript"), path("expression.transcript.hdf"), emit: transcript
         tuple val(meta), val(chr), path("stats.json"), emit: stats
     """
     workflow-glue create_matrix \
         ${chr} barcodes.tsv features.tsv \
         --tsv_out summary.tsv \
-        --hdf_out expression.hdf \
         --stats stats.json
     """
 }
@@ -266,7 +266,8 @@ process process_matrix {
     memory "16 GB"
     publishDir "${params.out_dir}/${meta.alias}", mode: 'copy', pattern: "*{mito,umap,raw,processed}*"
     input:
-        tuple val(meta), val(feature), path('inputs/matrix*.hdf')
+        tuple val(meta), path('inputs/matrix*.tsv')
+        each feature
     output:
         tuple val(meta), val(feature), path("${feature}_raw_feature_bc_matrix"), emit: raw
         tuple val(meta), val(feature), path("${feature}_processed_feature_bc_matrix"), emit: processed
@@ -278,11 +279,12 @@ process process_matrix {
     def mito_prefixes = params.mito_prefix.replaceAll(',', ' ')
     """
     export NUMBA_NUM_THREADS=${task.cpus}
-    workflow-glue process_matrix \
-        inputs/matrix*.hdf \
+    mkdir -p ${feature}_raw_feature_bc_matrix ${feature}_processed_feature_bc_matrix
+    process-matrix.py \
+        inputs/matrix*.tsv \
         --feature ${feature} \
-        --raw ${feature}_raw_feature_bc_matrix \
-        --processed ${feature}_processed_feature_bc_matrix \
+        --raw ${feature}_raw_feature_bc_matrix/ \
+        --processed ${feature}_processed_feature_bc_matrix/ \
         --per_cell_mito ${feature}.expression.mito-per-cell.tsv \
         --per_cell_expr ${feature}.expression.mean-per-cell.tsv \
         --umap_tsv ${feature}.expression.umap.tsv \
@@ -420,13 +422,14 @@ workflow process_bams {
         //       in extracted_barcodes. It takes a long time per-chunk so should
         //       be left as parallel across chunks.
         assign_barcodes(
-            generate_whitelist.out.whitelist
+            generate_whitelist.out.for_assignment
             .cross(extracted_barcodes)
             .map {it ->
                 meta = it[0][0]
                 whitelist = it[0][1]
+                counts = it[0][2]
                 barcodes = it[1][1]
-                [meta, whitelist, barcodes]})
+                [meta, whitelist, counts, barcodes]})
 
         // Combine the tag chunks to per chrom chunks and emit [meta, chr, tags]
         chr_tags = cat_tags_by_chrom(assign_barcodes.out.tags.groupTuple())
@@ -466,10 +469,8 @@ workflow process_bams {
 
         // aggregate per-chrom expression matrices to create MEX and UMAP TSVs
         process_matrix(
-            create_matrix.out.gene.groupTuple(by: [0, 2])
-            .mix(
-                create_matrix.out.transcript.groupTuple(by: [0, 2]))
-            .map {meta, chroms, feature, hdfs -> [meta, feature, hdfs]})
+            create_matrix.out.summary.groupTuple()
+            .map {meta, chroms, tsvs -> [meta, tsvs]}, ['gene', 'transcript'])
 
         // TODO: merging the gffs and merging the fasta files is two independent
         //       tasks, they can be done in parallel in two distinct processes.
