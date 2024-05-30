@@ -56,7 +56,7 @@ process generate_whitelist{
 process assign_barcodes{
     label "singlecell"
     cpus 1
-    memory "2 GB"
+    memory "75 GB"
     input:
          tuple val(meta),
                path("whitelist.tsv"),
