@@ -181,9 +181,7 @@ if args.enable_filtering:
 total_per_cell = matrix.groupby('barcode')['count'].sum()
 scaling = NORM_COUNT / total_per_cell
 matrix['scaled'] = [scaling[barcode] * count for barcode, count in zip(matrix.barcode, matrix['count'])]
-
-# TODO: this is transforming in a different manner as the default, so processed expression and mean_expression will not be comparable with default pipeline
-matrix['transformed'] = np.log10(matrix.scaled)
+matrix['transformed'] = np.log10(matrix.scaled + 1) # np.log1p(matrix.scaled) / np.log(10) is the transformation done in the original pipeline
 
 # write an MEX file
 write_mm(matrix[['feature', 'barcode', 'transformed']].rename(columns={'transformed': 'count'}), matrix.feature.unique().tolist(), matrix.barcode.unique().tolist(), PROCESSED)
