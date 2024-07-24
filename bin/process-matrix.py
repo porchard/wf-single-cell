@@ -150,30 +150,31 @@ matrix = matrix.rename(columns={'corrected_barcode': 'barcode', FEATURE: 'featur
 # write an MEX file
 write_mm(matrix, matrix.feature.unique().tolist(), matrix.barcode.unique().tolist(), RAW)
 
+if args.enable_filtering:
+    # filter cells and features
+    feature_observed_in_n_cells = matrix.groupby('feature').barcode.nunique()
+    n_gene_observed_in_cell = matrix.groupby('barcode').feature.nunique()
+    keep_features = feature_observed_in_n_cells[feature_observed_in_n_cells>=MIN_CELLS].index.to_list()
+    keep_cells = n_gene_observed_in_cell[n_gene_observed_in_cell>=MIN_FEATURES].index.to_list()
+    matrix = matrix[matrix.barcode.isin(keep_cells)]
+    matrix = matrix[matrix.feature.isin(keep_features)]
 
-# filter cells and features
-feature_observed_in_n_cells = matrix.groupby('feature').barcode.nunique()
-n_gene_observed_in_cell = matrix.groupby('barcode').feature.nunique()
-keep_features = feature_observed_in_n_cells[feature_observed_in_n_cells>=MIN_CELLS].index.to_list()
-keep_cells = n_gene_observed_in_cell[n_gene_observed_in_cell>=MIN_FEATURES].index.to_list()
-matrix = matrix[matrix.barcode.isin(keep_cells)]
-matrix = matrix[matrix.feature.isin(keep_features)]
+    # add is_mito column
+    # arguably best to do this before filtering features etc, but in the original pipeline it's done after
+    all_features = matrix.feature.unique()
+    mito_features = set()
+    for prefix in mito_prefixes:
+        for feature in all_features:
+            if feature.startswith(prefix):
+                mito_features.add(feature)
+    matrix['is_mito'] = matrix.feature.isin(mito_features).astype(int)
 
-# add is_mito column
-all_features = matrix.feature.unique()
-mito_features = set()
-for prefix in mito_prefixes:
-    for feature in all_features:
-        if feature.startswith(prefix):
-            mito_features.add(feature)
-matrix['is_mito'] = matrix.feature.isin(mito_features).astype(int)
-
-# compute mito_pct
-mito_pct = matrix.groupby('barcode').is_mito.mean().reset_index().rename(columns={'barcode': 'CB'})
-mito_pct['mito_pct'] = 100*mito_pct.is_mito
-mito_pct[['CB', 'mito_pct']].to_csv(PER_CELL_MITO, sep='\t', index=False)
-keep_mito = mito_pct[mito_pct.mito_pct<=MAX_MITO].CB.unique()
-matrix = matrix[matrix.barcode.isin(keep_mito)]
+    # compute mito_pct
+    mito_pct = matrix.groupby('barcode').is_mito.mean().reset_index().rename(columns={'barcode': 'CB'})
+    mito_pct['mito_pct'] = 100*mito_pct.is_mito
+    mito_pct[['CB', 'mito_pct']].to_csv(PER_CELL_MITO, sep='\t', index=False)
+    keep_mito = mito_pct[mito_pct.mito_pct<=MAX_MITO].CB.unique()
+    matrix = matrix[matrix.barcode.isin(keep_mito)]
 
 
 # normalize and transform
