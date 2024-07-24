@@ -6,8 +6,8 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-# from sklearn.decomposition import PCA
-# import umap
+from sklearn.decomposition import PCA
+import umap
 
 # from .expression_matrix import ExpressionMatrix  # noqa: ABS101
 # from .util import get_named_logger, wf_parser  # noqa: ABS101
@@ -189,9 +189,21 @@ write_mm(matrix[['feature', 'barcode', 'transformed']].rename(columns={'transfor
 # write CB, mean_expression
 matrix.groupby('barcode').transformed.mean().reset_index().rename(columns={'transformed': 'mean_expression', 'barcode': 'CB'}).to_csv(PER_CELL_EXPR, sep='\t', index=False)
 
+if args.enable_umap:
+    matrix_wide = matrix.pivot(index='feature', columns='barcode', values='transformed').fillna(0)
+    pca = PCA().fit_transform(matrix_wide.transpose())
+    for replicate in range(args.replicates):
+        mapper = umap.UMAP(
+            n_neighbors=args.n_neighbors,
+            min_dist=args.min_dist,
+            n_components=args.dimensions,
+            verbose=0)
+        embedding = mapper.fit_transform(pca)
 
-# output dummy UMAP files for now
-fake_umap = matrix[['barcode']].rename(columns={'barcode': 'CB'})
-fake_umap['D1'] = 0
-fake_umap['D2'] = 0
-fake_umap.to_csv(f'{FEATURE}.expression.umap.1.tsv', sep='\t', index=False)
+        # would be nice to avoid a copy here, but the array is fairly small
+        fname = args.umap_tsv
+        if args.replicates > 1:
+           fname = args.umap_tsv.with_suffix(f".{replicate}{args.umap_tsv.suffix}")
+        cols = [f"D{i+1}" for i in range(args.dimensions)]
+        out = pd.DataFrame(embedding, columns=cols, index=matrix_wide.columns.to_list())
+        out.to_csv(fname, sep="\t", index=True, index_label="CB")
