@@ -130,7 +130,7 @@ process stringtie {
     label "singlecell"
     cpus params.threads
     // Memory usage for this process is usually less than 3GB, but some cases it may go over this.
-    memory = { 3.GB * task.attempt }
+    memory = { 7.GB * task.attempt }
     maxRetries = 3
     errorStrategy = { task.exitStatus in 137..140 ? 'retry' : 'terminate' }
     input:
@@ -263,7 +263,9 @@ process create_matrix {
 process process_matrix {
     label "singlecell"
     cpus  1
-    memory "16 GB"
+    memory { 40.GB * task.attempt }
+    maxRetries 3
+    errorStrategy 'retry'
     publishDir "${params.out_dir}/${meta.alias}", mode: 'copy', pattern: "*{mito,umap,raw,processed}*"
     input:
         tuple val(meta), path('inputs/matrix*.tsv')
