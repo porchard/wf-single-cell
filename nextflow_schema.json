@@ -224,6 +224,13 @@
                     "help_text": "Parts of the workflow analyse mitochondrial genes separately. These genes are identified by searching for a gene name prefix. Human mitochondrial genes can be identified with prefix 'MT-' and mouse genes with prefix 'mt-'. If the reference genome contains data from multiple organisms with different nomenclature, multiple prefixes can be supplied like so: 'MT-,mt-'",
                     "default": "MT-"
                 },
+                "correction_method": {
+                    "type": "string",
+                    "title": "Barcode correction method",
+                    "description": "If set to 'custom', uses a cellranger-like barcode correction method and outputs a full count matrix. Otherwise should be set to 'default'",
+                    "help_text": "If set to 'custom', uses a cellranger-like barcode correction method and outputs a full count matrix. Otherwise should be set to 'default'",
+                    "default": "custom"
+                },
                 "umap_n_repeats": {
                     "type": "integer",
                     "title": "Number of UMAP repetitions",
